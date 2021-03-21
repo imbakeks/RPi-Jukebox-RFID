@@ -69,6 +69,15 @@ def generate_device(config, deviceName):
                 getFunctionCall(config.get('functionCallDown')),
                 config.getfloat('timeBase', fallback=0.1),
                 name=deviceName)
+    elif device_type == 'LEDRing':
+        return LEDRing(config.getint('Pin'),
+                            action=getFunctionCall(config.get('functionCall')),
+                            name=deviceName,
+                            bouncetime=config.getint('bouncetime', fallback=500),
+                            edge=config.get('edge', fallback='FALLING'),
+                            hold_repeat=config.getboolean('hold_repeat', False),
+                            hold_time=config.getfloat('hold_time', fallback=0.3),
+                            pull_up_down=config.get('pull_up_down', fallback=GPIO.PUD_UP))
     logger.warning('cannot find {}'.format(deviceName))
     return None
 
@@ -92,7 +101,6 @@ def get_all_devices(config):
 
 
 if __name__ == "__main__":
-
     logging.basicConfig(level='INFO')
     logger = logging.getLogger()
     logger.setLevel('INFO')

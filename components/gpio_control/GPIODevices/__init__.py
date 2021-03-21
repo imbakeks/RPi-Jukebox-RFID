@@ -5,3 +5,4 @@ from .simple_button import SimpleButton
 from .two_button_control import TwoButtonControl
 from .VolumeControl import VolumeControl
 from .led import *
+from .ledring import *

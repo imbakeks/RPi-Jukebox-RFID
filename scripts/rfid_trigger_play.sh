@@ -286,14 +286,26 @@ if [ "$CARDID" ]; then
                 # Add info into the log, making it easer to monitor cards
                 echo "This ID has been used before." >> $PATHDATA/../shared/latestID.txt
                 if [ "${DEBUG_rfid_trigger_play_sh}" == "TRUE" ]; then echo "This ID has been used before."   >> $PATHDATA/../logs/debug.log; fi
+
+                ####################
+                # play rfid scanned sound
+                mpgvolume=$((32768*${AUDIOVOLSTARTUP}/100))
+                echo "${mpgvolume} is the mpg123 startup volume for playing rfid sound"
+                sudo mpg123 -f -${mpgvolume} /home/pi/RPi-Jukebox-RFID/shared/rfidscanned.mp3
             else
                 # Human readable shortcut does not exists, so create one with the content $CARDID
                 # this file can later be edited manually over the samba network
-                echo "$CARDID" > $PATHDATA/../shared/shortcuts/$CARDID
-                FOLDER=$CARDID
+                #echo "$CARDID" > $PATHDATA/../shared/shortcuts/$CARDID
+                #FOLDER=$CARDID
                 # Add info into the log, making it easer to monitor cards
                 echo "This ID was used for the first time." >> $PATHDATA/../shared/latestID.txt
                 if [ "${DEBUG_rfid_trigger_play_sh}" == "TRUE" ]; then echo "This ID was used for the first time."   >> $PATHDATA/../logs/debug.log; fi
+
+                 ####################
+                # play rfid unkown sound
+                mpgvolume=$((32768*${AUDIOVOLSTARTUP}/100))
+                echo "${mpgvolume} is the mpg123 startup volume for playing rfid sound"
+                sudo mpg123 -f -${mpgvolume} /home/pi/RPi-Jukebox-RFID/shared/rfidunknown.mp3
             fi
             # Add info into the log, making it easer to monitor cards
             echo "The shortcut points to audiofolder '$FOLDER'." >> $PATHDATA/../shared/latestID.txt
