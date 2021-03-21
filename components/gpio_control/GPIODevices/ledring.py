@@ -36,7 +36,6 @@ class LEDRing(SimpleButton):
         self.mpdHost = 'localhost'
         self.mpdPort = 6600
         self.mpdHadConnection = False
-        self.mpc.connect(self.mpdHost, self.mpdPort)
 
         self.logger.info("MPD Client init")
 
@@ -68,11 +67,11 @@ class LEDRing(SimpleButton):
 
     def has_mpd_connection(self):
         """ Returns True if mpc is connected, False if not """
-        #self.mpc.disconnect()
+        self.mpc.disconnect()
         try:
-            #self.mpc.connect(self.mpdHost, self.mpdPort)
+            self.mpc.connect(self.mpdHost, self.mpdPort)
             self.mpc.ping()
-            #self.mpc.disconnect()
+            self.mpc.disconnect()
             return True
         except ConnectionError:
             return False
@@ -88,8 +87,9 @@ class LEDRing(SimpleButton):
     def colorWipeInstant(self, color):
         """Wipe color across display all pixels."""
         for i in range(self.strip.numPixels()):
-            self.strip.setPixelColor(i, color)
-         self.strip.show()
+            self.strip.setPixelColor(i, color)            
+        
+        self.strip.show()
 
     def simulateFire (self, wait_ms=500):
         """Simulates fire according to https://www.az-delivery.de/en/blogs/azdelivery-blog-fur-arduino-und-raspberry-pi/eine-stimmungslaterne"""
@@ -175,10 +175,9 @@ class LEDRing(SimpleButton):
         while True:
             try:
                 if self.shuttingDown:
-                    self.logger.info("Shutdown")
-                    self.mpc.disconnect()
+                    self.logger.info("Shutdown")                    
                     self.colorWipeInstant(Color(0,0,0))
-                    break # Stop the loop
+                    break
 
                 if not self.has_mpd_connection():
                     # Play wait for animation
