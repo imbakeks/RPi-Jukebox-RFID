@@ -47,3 +47,5 @@ composer.phar
 # composer.lock
 
 # End of https://www.gitignore.io/api/composer
+
+.vscode
