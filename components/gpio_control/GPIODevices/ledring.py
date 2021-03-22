@@ -29,19 +29,22 @@ class LEDRing(SimpleButton):
         super().__init__(pin, action, name, bouncetime, edge, hold_time, hold_repeat, 
             pull_up_down)
 
-        self.logger.info("LEDRing init")
+        self.logger.info("LEDRing init")                
 
         # MPC client to check for connection
         self.mpc = mpd.MPDClient()
         self.mpdHost = 'localhost'
         self.mpdPort = 6600
+        self.mpdConnected = False
         self.mpdHadConnection = False
+        self.songCache = None
 
         self.logger.info("MPD Client init")
 
         # Shutdown flag, set on shutdown 
-        self.shuttingDown = False
-        signal.signal(signal.SIGTERM, self.onShutdown)
+        self.killMe = False
+        signal.signal(signal.SIGINT, self.exitRequested)
+        signal.signal(signal.SIGTERM, self.exitRequested)
 
         # Create NeoPixel object with appropriate configuration.         
         self.strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL)
@@ -59,22 +62,49 @@ class LEDRing(SimpleButton):
         self.colorWipe(Color(0,0,0), 1)
 
         self.logger.info("Start loop")
+        # @todo: Would be better to start loop in subprocess/ thread
         self.loop()
 
-    def onShutdown(self, sig, frame):
+    def exitRequested(self, sig, frame):
         """ Event called on shutdown """
-        self.shuttingDown = True
+        self.logger.info("Exit requested")
+        self.killMe = True
 
     def has_mpd_connection(self):
-        """ Returns True if mpc is connected, False if not """
-        self.mpc.disconnect()
+        """ Returns True if mpc is connected, False if not """        
         try:
-            self.mpc.connect(self.mpdHost, self.mpdPort)
+            # Lazy connect
+            if not self.mpdConnected:
+                self.mpc.connect(self.mpdHost, self.mpdPort)
+                self.mpdConnected = True
+
+            if not self.mpdConnected:
+                return False
+
             self.mpc.ping()
-            self.mpc.disconnect()
             return True
         except ConnectionError:
+            self.mpc.disconnect()
             return False
+
+    def mpdSongChanged(self):
+        """ Returns true if song has changed """
+        if not self.mpdConnected:
+            return False
+
+        newSong = self.mpc.status()["song"]
+        if newSong != self.songCache:
+            self.songCache = newSong
+            return True
+        
+        return False
+
+    def mpdIsPlaying(self):
+        """ Returns true if a song is playing """
+        if not self.mpdConnected:
+            return False
+
+        return self.mpc.status()["state"] != "pause"
 
     # Define functions which animate LEDs in various ways.
     def colorWipe(self, color, wait_ms=50):
@@ -103,8 +133,8 @@ class LEDRing(SimpleButton):
             self.fireLastTime = nowmilli
             for i in numPixelsRange:
                 # For each pixel..
-                lightValue[i * 3] = random.randrange(240, 255); # 200
-                lightValue[i * 3 + 1] = random.randrange(30, 60); # 50
+                lightValue[i * 3] = random.randrange(240, 255) # 200
+                lightValue[i * 3 + 1] = random.randrange(30, 60) # 50
                 lightValue[i * 3 + 2] = 0
 
             # Switch some lights darker
@@ -169,39 +199,49 @@ class LEDRing(SimpleButton):
                 for i in range(0, self.strip.numPixels(), 3):
                     self.strip.setPixelColor(i+q, 0)
 
-    def loop(self):        
+    def loop(self):
         """LED loop"""
+        while True:            
+            if self.killMe:
+                self.logger.info("Shutdown")
+                self.colorWipeInstant(Color(0,0,0))
+                signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
+                break
 
-        while True:
-            try:
-                if self.shuttingDown:
-                    self.logger.info("Shutdown")                    
-                    self.colorWipeInstant(Color(0,0,0))
-                    break
+            if not self.has_mpd_connection():
+                self.logger.info("MPD: Waiting for connection")
+                # Play wait for animation
+                self.mpdHadConnection = False
+                # self.theaterChase(Color(127, 127, 127))                
+                self.theaterChaseRainbow(33)
+                continue # Wait for mpd connection before continueing
+            elif not self.mpdHadConnection:
+                self.logger.info("MPD connected")
+                # Play animation once on connection                    
+                self.mpdHadConnection = True
+                self.theaterChase(Color(0, 0, 127))
 
-                if not self.has_mpd_connection():
-                    # Play wait for animation
-                    self.mpdHadConnection = False
-                    # self.theaterChase(Color(127, 127, 127))                
-                    self.theaterChaseRainbow(10)
-                    continue # Wait for mpd connection before continueing
-                elif not self.mpdHadConnection:
-                    self.logger.info("MPD connected")
-                    # Play animation once on connection                    
-                    self.mpdHadConnection = True
-                    self.theaterChase(Color(0, 0, 127))
+            # Pressed = Not playing
+            if self.is_pressed:
+                self.simulateFire(100)
+            # Released = Playing
+            else:
+                # Card scanned but nothing is playing
+                if not self.mpdIsPlaying():
+                    self.theaterChase(Color(255,15,4),33, 1)
+                    continue
 
-                # Pressed = Not playing
-                if self.is_pressed:
-                    self.simulateFire(100)
-                # Released = Playing
+                # Play quick cycle on song change
+                if self.mpdSongChanged():
+                    self.rainbowCycle(1,1)
                 else:
                     self.rainbowCycle(5,1)
-                    #self.colorWipe(Color(0,255,0), 25)
-                    #self.colorWipe(Color(0,0,0), 25)
-                
-                # Ensure inifite loop but also make sure that there is always some sleep time to not
-                # kill the cpu although all animations contain a sleep anyways, just to be sure
-                time.sleep(0.1)
-            except:
-                break
+
+                #self.colorWipe(Color(0,255,0), 25)
+                #self.colorWipe(Color(0,0,0), 25)
+            
+            # Ensure inifite loop but also make sure that there is always some sleep time to not
+            # kill the cpu although all animations contain a sleep anyways, just to be sure
+            time.sleep(33/1000.0)
+
+
