@@ -72,16 +72,11 @@ class LEDRing(SimpleButton):
 
     def has_mpd_connection(self):
         """ Returns True if mpc is connected, False if not """        
-        try:
-            # Lazy connect
-            if not self.mpdConnected:
-                self.mpc.connect(self.mpdHost, self.mpdPort)
-                self.mpdConnected = True
-
-            if not self.mpdConnected:
-                return False
-
-            self.mpc.ping()
+        try:            
+            self.mpc.disconnect()
+            self.mpc.connect(self.mpdHost, self.mpdPort)
+            self.mpc.ping()                
+            self.mpdConnected = True            
             return True
         except ConnectionError:
             self.mpc.disconnect()
@@ -156,8 +151,10 @@ class LEDRing(SimpleButton):
             for q in range(3):
                 for i in range(0, self.strip.numPixels(), 3):
                     self.strip.setPixelColor(i+q, color)
+
                 self.strip.show()
                 time.sleep(wait_ms/1000.0)
+
                 for i in range(0, self.strip.numPixels(), 3):
                     self.strip.setPixelColor(i+q, 0)
 
@@ -177,14 +174,19 @@ class LEDRing(SimpleButton):
         for j in range(256*iterations):
             for i in range(self.strip.numPixels()):
                 self.strip.setPixelColor(i, self.wheel((i+j) & 255))
+
             self.strip.show()
             time.sleep(wait_ms/1000.0)
     
-    def rainbowCycle(self, wait_ms=20, iterations=5):
+    def rainbowCycle(self, wait_ms=20, iterations=5, invert=False):
         """Draw rainbow that uniformly distributes itself across all pixels."""
         for j in range(256*iterations):
             for i in range(self.strip.numPixels()):
-                self.strip.setPixelColor(i, self.wheel((int(i * 256 / self.strip.numPixels()) + j) & 255))
+                index = i
+                if invert:
+                    index = self.strip.numPixels() - i - 1
+                self.strip.setPixelColor(index, self.wheel((int(i * 256 / self.strip.numPixels()) + j) & 255))
+
             self.strip.show()
             time.sleep(wait_ms/1000.0)
 
@@ -194,6 +196,7 @@ class LEDRing(SimpleButton):
             for q in range(3):
                 for i in range(0, self.strip.numPixels(), 3):
                     self.strip.setPixelColor(i+q, self.wheel((i+j) % 255))
+
                 self.strip.show()
                 time.sleep(wait_ms/1000.0)
                 for i in range(0, self.strip.numPixels(), 3):
@@ -201,25 +204,28 @@ class LEDRing(SimpleButton):
 
     def loop(self):
         """LED loop"""
-        while True:            
+        while True:
+            # Shutdown
             if self.killMe:
                 self.logger.info("Shutdown")
-                self.colorWipeInstant(Color(0,0,0))
+                self.colorWipe(Color(0,0,0), 10)
                 signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
                 break
 
+            # Waiting for connection
             if not self.has_mpd_connection():
                 self.logger.info("MPD: Waiting for connection")
                 # Play wait for animation
                 self.mpdHadConnection = False
                 # self.theaterChase(Color(127, 127, 127))                
                 self.theaterChaseRainbow(33)
-                continue # Wait for mpd connection before continueing
+                continue 
+            # Connection done, play quick one shot anim
             elif not self.mpdHadConnection:
                 self.logger.info("MPD connected")
                 # Play animation once on connection                    
                 self.mpdHadConnection = True
-                self.theaterChase(Color(0, 0, 127))
+                self.theaterChase(Color(0, 0, 127), 16)
 
             # Pressed = Not playing
             if self.is_pressed:
@@ -228,20 +234,21 @@ class LEDRing(SimpleButton):
             else:
                 # Card scanned but nothing is playing
                 if not self.mpdIsPlaying():
-                    self.theaterChase(Color(255,15,4),33, 1)
+                    self.theaterChase(Color(255,15,4), 33, 1)
                     continue
 
                 # Play quick cycle on song change
                 if self.mpdSongChanged():
-                    self.rainbowCycle(1,1)
+                    self.rainbowCycle(0.33, 3, True)
+                # Playing
                 else:
-                    self.rainbowCycle(5,1)
+                    self.rainbowCycle(5, 1, True)
 
                 #self.colorWipe(Color(0,255,0), 25)
                 #self.colorWipe(Color(0,0,0), 25)
             
             # Ensure inifite loop but also make sure that there is always some sleep time to not
             # kill the cpu although all animations contain a sleep anyways, just to be sure
-            time.sleep(33/1000.0)
+            time.sleep(120.0/1000.0)
 
 
