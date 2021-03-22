@@ -408,6 +408,12 @@ if [ ! -z "$FOLDER" -a ! -z ${FOLDER+x} -a -d "${AUDIOFOLDERSPATH}/${FOLDER}" ];
             else
                 if [ "${DEBUG_rfid_trigger_play_sh}" == "TRUE" ]; then echo "MPD not playing, start playing" >> $PATHDATA/../logs/debug.log; fi
                 sudo $PATHDATA/playout_controls.sh -c=playerplay &>/dev/null
+
+                # imbakeks: Restart playlist if reached end
+                currentSong=`mpc current`
+                if ["${currentSong}" == ""]; then
+                    PLAYPLAYLIST=yes
+                fi
             fi
             if [ "${DEBUG_rfid_trigger_play_sh}" == "TRUE" ]; then echo "  Completed: toggle pause/play" >> $PATHDATA/../logs/debug.log; fi
         elif [ "$SECONDSWIPE" == "PLAY" -a $PLLENGTH -gt 0 ]

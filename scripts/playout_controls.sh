@@ -611,6 +611,13 @@ case $COMMAND in
         fi
 
         mpc prev
+
+        # imbakeks: Fix for not playing first song after prev being pressed
+        # when first song was current already
+        TMP_STATE=`mpc current`
+        if ["${TMP_STATE}" == ""]; then
+            mpc play;
+        fi
         ;;
     playerprevchapter)
         CURRENT_SONG_ELAPSED_MS=$(sec_to_ms "$CURRENT_SONG_ELAPSED")
