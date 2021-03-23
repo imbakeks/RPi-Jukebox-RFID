@@ -73,14 +73,23 @@ class LEDRingAnimation():
     def __init__(self, strip):
         self.deltaTime = 0.0
         self.currentTime = 0.0
-        self.strip = strip        
+        self.strip = strip
+        self.waitForFinish = False
+        self.duration = -1
+        self.timer = 0
+        self.name = ""
 
     def reset(self):
         self.currentTime = 0.0
+        self.timer = 0
 
     def tick(self, deltaTime):
         self.deltaTime = deltaTime
         self.currentTime += self.deltaTime
+        self.timer += self.deltaTime
+
+    def isFinished(self):
+        return self.duration < 0 or self.currentTime > self.duration
 
     @staticmethod
     def posToRainbow(pos):
@@ -96,13 +105,13 @@ class LEDRingAnimation():
 
 class LEDRingAnimationTimed(LEDRingAnimation):
     """ Base class for duration based animations """ 
-    pass
 
-    def __init__(self, strip, duration):
+    def __init__(self, strip, duration):          
+        super().__init__(strip)
         self.duration = duration
         self.alpha = 0.0
-        self.loop = False
-        super().__init__(strip)
+        self.loop = False      
+        self.name = "LEDRingAnimationTimed"
 
     def reset(self):
         super().reset()
@@ -115,18 +124,14 @@ class LEDRingAnimationTimed(LEDRingAnimation):
         super().tick(deltaTime)
         self.alpha = clamp01(self.currentTime / self.duration)
 
-    def isFinished(self):
-        return self.currentTime > self.duration
-
-
 class FadeAnimation(LEDRingAnimationTimed):
     """ Fade from start to end color in duration """
-    pass    
 
-    def __init__(self, strip, duration, starColor, endColor):
-        self.startColor = starColor
-        self.endColor = endColor        
+    def __init__(self, strip, duration, starColor, endColor):             
         super().__init__(strip, duration)
+        self.startColor = starColor
+        self.endColor = endColor  
+        self.name = "FadeAnimation"
 
     def tick(self, deltaTime):
         super().tick(deltaTime)
@@ -139,48 +144,54 @@ class FadeAnimation(LEDRingAnimationTimed):
 
 class ColorWipeAnimation(LEDRingAnimationTimed):
     """ Wipe color across display a pixel at a time """
-    pass
 
-    def __init__(self, strip, duration, endColor):
-        self.endColor = endColor        
-        self.timeBetweenPixels = duration / LED_COUNT
-        self.currentPixel = 0
-        self.currentPixelShowTime = 0.0
+    def __init__(self, strip, duration, endColor):               
         super().__init__(strip, duration)
+        self.endColor = endColor        
+        self.timeBetweenPixels = duration / strip.numPixels()
+        self.currentPixel = 0
+        self.currentPixelShowTime = 0.0 
+        self.name = "ColorWipeAnimation"
 
     def reset(self):
         super().reset()
-        self.currentPixel = 0
-        self.currentPixelShowTime = 0.0
+        self.currentPixel = 0        
 
     def tick(self, deltaTime):
-        super().tick(deltaTime)
-        self.currentPixelShowTime += deltaTime
+        super().tick(deltaTime)        
 
-        if self.currentPixelShowTime >= self.timeBetweenPixels:
-            self.currentPixelShowTime = 0.0
-            self.strip.setPixelColor(self.currentPixel, self.endColor)
-            self.strip.show()
-            self.currentPixel += 1
+        if self.timer < self.timeBetweenPixels:
+            return
+        self.timer = 0.0
+
+        self.strip.setPixelColor(self.currentPixel, self.endColor)
+        self.strip.show()
+        self.currentPixel += 1
 
 class TheaterChase(LEDRingAnimation):
     """Movie theater light style chaser animation."""
 
-    def __init__(self, strip, color, delay=0.01, iterations=1):
+    def __init__(self, strip, color, delay=0.01, iterations=1):            
+        super().__init__(strip)
         self.color = color
         self.delay = delay
         self.iterations = iterations
         self.j = 0
+        self.q = 0    
+        self.name = "TheaterChase"
+
+    def reset(self):
+        self.j = 0
         self.q = 0
-        super().__init__(strip)
+        super().reset()
 
     def tick(self, deltaTime):
         super().tick(deltaTime)
 
-        if self.currentTime < self.delay:
+        if self.timer < self.delay:
             return
 
-        self.currentTime = 0
+        self.timer = 0
 
         self.q += 1
         if self.q > 2:
@@ -199,21 +210,26 @@ class TheaterChase(LEDRingAnimation):
 
 class TheaterChaseRainbowAnimation(LEDRingAnimation):
     """Rainbow movie theater light style chaser animation."""
-    pass
 
-    def __init__(self, strip, delay = 0.01):
+    def __init__(self, strip, delay = 0.01):             
+        super().__init__(strip)
         self.delay = delay
         self.j = 0
-        self.q = 0
-        super().__init__(strip)
+        self.q = 0  
+        self.name = "TheaterChaseRainbowAnimation"
 
+    def reset(self):
+        super().reset()
+        self.j = 0
+        self.q = 0
+       
     def tick(self, deltaTime):
         super().tick(deltaTime)
 
-        if self.currentTime < self.delay:
+        if self.timer < self.delay:
             return
 
-        self.currentTime = 0
+        self.timer = 0
 
         self.q += 1
         if self.q > 2:
@@ -232,42 +248,51 @@ class TheaterChaseRainbowAnimation(LEDRingAnimation):
 
 class RaimbowAnimation(LEDRingAnimation):
     """Draw rainbow that fades across all pixels at once."""
-    def __init__(self, strip, delay = 0.01):
+    def __init__(self, strip, delay = 0.01):        
+        super().__init__(strip)
         self.delay = delay
         self.iter = 0
-        super().__init__(strip)
+        self.name = "RaimbowAnimation"
+
+    def reset(self):
+        self.iter = 0
+        super().reset()
 
     def tick(self, deltaTime):
         super().tick(deltaTime)
 
-        if self.currentTime < self.delay:
+        if self.timer < self.delay:
             return
 
-        self.currentTime = 0
-
-        self.iter += 1
+        self.timer = 0
+        
         for i in range(self.strip.numPixels()):
             self.strip.setPixelColor(i, self.posToRainbow((i + self.iter) & 255))
 
         self.strip.show()
+        self.iter += 1
 
 class RainbowCycleAnimation(LEDRingAnimation):
     """Draw rainbow that uniformly distributes itself across all pixels."""
-    def __init__(self, strip, delay = 0.01, invert = False):
+    def __init__(self, strip, delay = 0.01, invert = False):        
+        super().__init__(strip)
         self.delay = delay
         self.invert = invert
         self.iter = 0
-        super().__init__(strip)
+        self.name = "RainbowCycleAnimation"
+
+    def reset(self):
+        super().reset()
+        self.iter = 0        
 
     def tick(self, deltaTime):
         super().tick(deltaTime)
 
-        if self.currentTime < self.delay:
+        if self.timer < self.delay:
             return
 
-        self.currentTime = 0
-
-        self.iter += 1
+        self.timer = 0
+        
         for i in range(self.strip.numPixels()):
             index = i
             if self.invert:
@@ -275,18 +300,27 @@ class RainbowCycleAnimation(LEDRingAnimation):
             self.strip.setPixelColor(index, self.posToRainbow((int(i * 256 / self.strip.numPixels()) + self.iter) & 255))
 
         self.strip.show()
+        self.iter += 1
         
 class FireAnimation(LEDRingAnimation):    
     """Simulates fire according to https://www.az-delivery.de/en/blogs/azdelivery-blog-fur-arduino-und-raspberry-pi/eine-stimmungslaterne"""
 
-    def __init__(self, strip, intervalMin = 0.25, intervalMax = 0.5):
+    def __init__(self, strip, intervalMin = 0.05, intervalMax = 0.15):        
+        super().__init__(strip)
         self.intervalMin = intervalMin
         self.intervalMax = intervalMax
         self.randomizeInterval()
         self.newLightValue = [0] * ((strip.numPixels() * 3) + 3)
-        self.currentPixelToUpdate = 0                
-        super().__init__(strip)
+        self.currentPixelToUpdate = 0
         self.randomizeNewFireColors()
+        self.name = "FireAnimation"
+
+    def reset(self):
+        self.currentPixelToUpdate = 0
+        self.randomizeInterval()
+        self.newLightValue = [0] * ((self.strip.numPixels() * 3) + 3)
+        self.randomizeNewFireColors()
+        super().reset()
 
     def randomizeInterval(self):
         self.fireInterval = (random.randrange(int(self.intervalMin * 1000), int(self.intervalMax * 1000))) / 1000.0
@@ -309,12 +343,11 @@ class FireAnimation(LEDRingAnimation):
     def tick(self, deltaTime):
         super().tick(deltaTime)
 
-        self.currentTime += deltaTime
-        if self.currentTime < 0.1:            
+        if self.timer < self.fireInterval:            
             return
 
         self.randomizeInterval()
-        self.currentTime = 0.0
+        self.timer = 0.0
 
         if self.currentPixelToUpdate <= 0:
             self.randomizeNewFireColors()
@@ -330,8 +363,9 @@ class FireAnimation(LEDRingAnimation):
 # LED Ring main class
 # --------------
 class LEDRing(SimpleButton):
+    """ LED ring implementation wrapping a button to access the RFID gpio input """
+
     logger = logging.getLogger("LEDRing")
-    pass
 
     def __init__(self, pin, action=lambda *args: None, name=None, bouncetime=500, edge=GPIO.FALLING,
                  hold_time=.1, hold_repeat=False, pull_up_down=GPIO.PUD_UP):                 
@@ -368,7 +402,7 @@ class LEDRing(SimpleButton):
         # Clean state at the beginning
         self.fireInterval = 100
         self.fireLastTime = 0
-        self.colorWipe(Color(0,0,0), 1)
+        self.colorWipeInstant(Color(0,0,0))
 
         self.logger.info("Start loop")
         # @todo: Would be better to start loop in subprocess/ thread
@@ -415,15 +449,7 @@ class LEDRing(SimpleButton):
         if not self.mpdConnected:
             return False
 
-        return self.mpc.status()["state"] != "pause"
-
-    # Define functions which animate LEDs in various ways.
-    def colorWipe(self, color, wait_ms=50):
-        """Wipe color across display a pixel at a time."""
-        for i in range(self.strip.numPixels()):
-            self.strip.setPixelColor(i, color)
-            self.strip.show()
-            time.sleep(wait_ms/1000.0)
+        return self.mpc.status()["state"] == "play"
 
     def colorWipeInstant(self, color):
         """Wipe color across display all pixels."""
@@ -432,202 +458,107 @@ class LEDRing(SimpleButton):
         
         self.strip.show()
 
-    def simulateFire (self, wait_ms=500):
-        """Simulates fire according to https://www.az-delivery.de/en/blogs/azdelivery-blog-fur-arduino-und-raspberry-pi/eine-stimmungslaterne"""
-        nowmilli = round(time.time() * 1000)
-        numPixels = self.strip.numPixels()
-        numPixelsRange = range(self.strip.numPixels())
-        diff = nowmilli - self.fireLastTime
-        lightValue = [0] * (numPixels * 3  + 2)
-        if diff >= self.fireInterval:
-            self.fireInterval = random.randrange(150, 200)
-            self.fireLastTime = nowmilli
-            for i in numPixelsRange:
-                # For each pixel..
-                lightValue[i * 3] = random.randrange(240, 255) # 200
-                lightValue[i * 3 + 1] = random.randrange(30, 60) # 50
-                lightValue[i * 3 + 2] = 0
-
-            # Switch some lights darker
-            for i in numPixelsRange:
-                selected = random.randrange(numPixels)
-                lightValue[selected * 3] = random.randrange(50, 60)
-                lightValue[selected * 3 + 1] = random.randrange(5, 10)
-                lightValue[selected * 3 + 2] = 0
-
-            for i in numPixelsRange:
-                # For each pixel...
-                self.strip.setPixelColor(i, Color(lightValue[i * 3], lightValue[i * 3 + 1], lightValue[i * 3 + 2]))
-                self.strip.show() # Send the updated pixel colors to the hardware.
-                time.sleep(wait_ms/1000.0)
-
-    def theaterChase(self, color, wait_ms=50, iterations=10):
-        """Movie theater light style chaser animation."""
-        for j in range(iterations):
-            for q in range(3):
-                for i in range(0, self.strip.numPixels(), 3):
-                    self.strip.setPixelColor(i+q, color)
-
-                self.strip.show()
-                time.sleep(wait_ms/1000.0)
-
-                for i in range(0, self.strip.numPixels(), 3):
-                    self.strip.setPixelColor(i+q, 0)
-
-    def wheel(self, pos):
-        """Generate rainbow colors across 0-255 positions."""
-        if pos < 85:
-            return Color(pos * 3, 255 - pos * 3, 0)
-        elif pos < 170:
-            pos -= 85
-            return Color(255 - pos * 3, 0, pos * 3)
-        else:
-            pos -= 170
-            return Color(0, pos * 3, 255 - pos * 3)
-
-    def rainbow(self, wait_ms=20, iterations=1):
-        """Draw rainbow that fades across all pixels at once."""
-        for j in range(256*iterations):
-            for i in range(self.strip.numPixels()):
-                self.strip.setPixelColor(i, self.wheel((i+j) & 255))
-
-            self.strip.show()
-            time.sleep(wait_ms/1000.0)
-    
-    def rainbowCycle(self, wait_ms=20, iterations=5, invert=False):
-        """Draw rainbow that uniformly distributes itself across all pixels."""
-        for j in range(256*iterations):
-            for i in range(self.strip.numPixels()):
-                index = i
-                if invert:
-                    index = self.strip.numPixels() - i - 1
-                self.strip.setPixelColor(index, self.wheel((int(i * 256 / self.strip.numPixels()) + j) & 255))
-
-            self.strip.show()
-            time.sleep(wait_ms/1000.0)
-
-    def theaterChaseRainbow(self, wait_ms=50):
-        """Rainbow movie theater light style chaser animation."""
-        for j in range(256):
-            for q in range(3):
-                for i in range(0, self.strip.numPixels(), 3):
-                    self.strip.setPixelColor(i+q, self.wheel((i+j) % 255))
-
-                self.strip.show()
-                time.sleep(wait_ms/1000.0)
-                for i in range(0, self.strip.numPixels(), 3):
-                    self.strip.setPixelColor(i+q, 0)
-
-    def startupAnimation(self, wait_ms=50):
-        """Rainbow movie theater light style chaser animation."""
-        for j in range(256):
-            for q in range(3):
-                for i in range(0, self.strip.numPixels(), 3):
-                    self.strip.setPixelColor(i+q, self.wheel((i+j) % 255))
-
-                self.strip.show()
-                time.sleep(wait_ms/1000.0)
-
-                for i in range(0, self.strip.numPixels(), 3):
-                    self.strip.setPixelColor(i+q, 0)
-
-                # Stop animation on connection
-                if self.isMpdConnected():
-                    return
-
-    def playbackAnimation(self, wait_ms=20, iterations=5, invert=False):
-        """Draw rainbow that uniformly distributes itself across all pixels."""
-        for j in range(256*iterations):
-            for i in range(self.strip.numPixels()):
-                index = i
-                if invert:
-                    index = self.strip.numPixels() - i - 1
-                self.strip.setPixelColor(index, self.wheel((int(i * 256 / self.strip.numPixels()) + j) & 255))
-
-            self.strip.show()  
-            time.sleep(wait_ms/1000.0)
-            if self.is_pressed or self.songChangedThisFrame or self.checkWantsShutdown():
-                return
-
     def loop(self):
         """LED loop"""
 
-        anim_tickrate = 16.6666666/1000.0 # 60fps
-        #anim_startup = ColorWipeAnimation(self.strip, 0.5, Color(255, 200, 0))
-        anim_startup = FadeAnimation(self.strip, 1.0, Color(0,0,0), Color(255,128,0))
-        anim_startup2 = FadeAnimation(self.strip, 0.3, Color(255,128,0), Color(0,0,0))
-        anim_theaterchaseRainbow = TheaterChaseRainbowAnimation(self.strip, anim_tickrate * 2)
-        anim_fire = FireAnimation(self.strip)
-        anim_theaterchase = TheaterChase(self.strip, Color(255, 255, 0), anim_tickrate * 2)
-        anim_rainbowCycle = RainbowCycleAnimation(self.strip, 5/1000.0, True)
-        anim_rainbow = RaimbowAnimation(self.strip, 5/1000.0)
-
-        anim_shutdown = ColorWipeAnimation(self.strip, 3.0, Color(0,0,0))
+        anim_fps = 144.0
+        anim_tickrate = (1.0/anim_fps)
+        currentAnimation = None
+        nextAnimation = None
+               
+        # Setup animations
+        anim_startup = FadeAnimation(self.strip, 0.05, Color(0,0,0), Color(255,128,0))
+        anim_startup.waitForFinish = True
+        anim_startup2 = FadeAnimation(self.strip, 0.5, Color(255,128,0), Color(0,0,0))
+        anim_startup2.waitForFinish = True
+        anim_shutdown = ColorWipeAnimation(self.strip, 3.0 / LED_COUNT, Color(0,0,0))
+        anim_mpdConnected = ColorWipeAnimation(self.strip, 1, Color(255, 255, 128))
+        anim_mpdConnected.waitForFinish = True
+        anim_waitForInput = FireAnimation(self.strip)
+        anim_inputError = TheaterChase(self.strip, Color(255, 32, 0), 1/90.0)
+        #anim_nextSong = RainbowCycleAnimation(self.strip, anim_tickrate * 5, True)
+        #anim_nextSong.duration = 0.5
+        anim_nextSong = ColorWipeAnimation(self.strip, 0.33, Color(255, 128, 0))        
+        anim_nextSong.name = "NextSongAnimation"
+        anim_nextSong.waitForFinish = True  
+        anim_playingSong = RainbowCycleAnimation(self.strip, 1/72, True)
 
         # Fixed tick implementation
         while True:
-            #self.isMpdConnected()
-            #self.songChangedThisFrame = self.mpdSongChanged()
+            wait = False
+            if nextAnimation is not None:
+                if currentAnimation is not None:
+                    if currentAnimation.waitForFinish and not currentAnimation.isFinished():
+                        wait = True                
 
-            #if not anim_startup.isFinished():
-            #    anim_startup.tick(anim_tickrate)
-            #elif not anim_startup2.isFinished():
-            #    anim_startup2.tick(anim_tickrate)
-            #else:
-            #    anim_startup.reset()
-            #    anim_startup2.reset()
-            #anim_theaterchase.tick(anim_tickrate)
-            anim_rainbow.tick(anim_tickrate)
+                if not wait and currentAnimation is not nextAnimation:
+                    self.logger.info("NEW animation: " + nextAnimation.name)
+                    currentAnimation = nextAnimation
 
+            if currentAnimation is not None:
+                currentAnimation.tick(anim_tickrate)
+                if currentAnimation.waitForFinish:
+                    self.logger.info("Waiting for finish " + str(currentAnimation.currentTime) + "/" + str(currentAnimation.duration))
+
+            time.sleep(anim_tickrate)
+            
             # Shutdown
             if self.killMe:
                 self.logger.info("Kill")
                 self.colorWipeInstant(Color(0,0,0))
+                nextAnimation = None
                 signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
                 break
             if self.checkWantsShutdown():
-                self.logger.info("Shutdown")                
-                self.colorWipe(Color(0,0,0), 10)
-                signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
-                break
+                self.logger.info("Shutdown")
+                nextAnimation = anim_shutdown
+                if anim_shutdown.isFinished():
+                    signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
+                continue
 
-            time.sleep(anim_tickrate)
-            continue
+            # Wait for an animation to get finished 
+            if wait:
+                self.logger.info("Waiting for animation")
+                continue
+
+            self.isMpdConnected()
+            self.songChangedThisFrame = self.mpdSongChanged()
 
             # Waiting for connection
             if not self.mpdConnected:
                 self.logger.info("MPD: Waiting for connection")
                 # Play wait for animation
-                self.mpdHadConnection = False     
-                self.startupAnimation(33)
+                self.mpdHadConnection = False
+                if not anim_startup.isFinished():
+                    nextAnimation = anim_startup
+                elif not anim_startup2.isFinished():
+                    nextAnimation = anim_startup2
                 continue 
             # Connection done, play quick one shot anim
             elif not self.mpdHadConnection:
                 self.logger.info("MPD connected/ Started")
                 # Play animation once on connection                    
                 self.mpdHadConnection = True
-                self.theaterChase(Color(255, 255, 0), 16)
+                nextAnimation = anim_mpdConnected
 
             # Pressed = Not playing
             if self.is_pressed:
-                self.simulateFire(100)
+                nextAnimation = anim_waitForInput                
             # Released = Playing
             else:
                 # Card scanned but nothing is playing
                 if not self.mpdIsPlaying():
-                    self.theaterChase(Color(255,15,4), 33, 1)
+                    nextAnimation = anim_inputError
                     continue
 
                 # Play quick cycle on song change
                 if self.songChangedThisFrame:
-                    self.rainbowCycle(0.33, 3, True)
+                    anim_nextSong.reset()
+                    nextAnimation = anim_nextSong
                 # Playing
                 else:
-                    self.playbackAnimation(5, 1, True)
-            
-            # Ensure inifite loop but also make sure that there is always some sleep time to not
-            # kill the cpu although all animations contain a sleep anyways, just to be sure
-            time.sleep(anim_tickrate/1000.0)
+                    nextAnimation = anim_playingSong
+           
             self.songChangedThisFrame = False
 
 
