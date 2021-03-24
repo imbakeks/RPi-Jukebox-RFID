@@ -367,12 +367,13 @@ class LEDRing(SimpleButton):
 
     logger = logging.getLogger("LEDRing")
 
-    def __init__(self, pin, action=lambda *args: None, name=None, bouncetime=500, edge=GPIO.FALLING,
+    def __init__(self, pin, pin_showVolume, action=lambda *args: None, name=None, bouncetime=500, edge=GPIO.FALLING,
                  hold_time=.1, hold_repeat=False, pull_up_down=GPIO.PUD_UP):                 
         super().__init__(pin, action, name, bouncetime, edge, hold_time, hold_repeat, 
             pull_up_down)
 
-        self.logger.info("LEDRing init")                
+        self.logger.info("LEDRing init")
+        self.pin_showVolume = pin_showVolume
 
         # MPC client to check for connection
         self.mpc = mpd.MPDClient()
@@ -381,6 +382,8 @@ class LEDRing(SimpleButton):
         self.mpdConnected = False
         self.mpdHadConnection = False
         self.songCache = None
+        self.mpdLastConnectionCheckTime = 0
+        self.mpdCheckConnectionInterval = 2
 
         self.logger.info("MPD Client init")
 
@@ -404,9 +407,23 @@ class LEDRing(SimpleButton):
         self.fireLastTime = 0
         self.colorWipeInstant(Color(0,0,0))
 
+        # Show volume button
+        self.volumeButton = SimpleButton(pin_showVolume, 
+            self.btn_onShowVolume, 
+            "LEDRingVolumeButton")
+        self.volumeShow = False
+        self.volumeShowStartTime = 0
+        self.volumeShowTime = 3
+        self.lastVolume = -1
+
         self.logger.info("Start loop")
         # @todo: Would be better to start loop in subprocess/ thread
         self.loop()
+
+    def btn_onShowVolume(self):
+        """ Event called on button press """
+        self.volumeShow = True
+        self.volumeShowStartTime = time.time()
 
     def exitRequested(self, sig, frame):
         """ Event called on shutdown """
@@ -419,14 +436,21 @@ class LEDRing(SimpleButton):
 
     def isMpdConnected(self):
         """ Returns True if mpc is connected, False if not """        
-        try:            
+        if self.mpdConnected:
+            diff = time.time() - self.mpdLastConnectionCheckTime
+            if diff < self.mpdCheckConnectionInterval:
+                return True
+
+        try:
             self.mpc.disconnect()
             self.mpc.connect(self.mpdHost, self.mpdPort)
-            self.mpc.ping()                
-            self.mpdConnected = True            
+            self.mpc.ping()
+            self.mpdConnected = True
+            self.mpdLastConnectionCheckTime = time.time()
             return True
         except ConnectionError:
             self.mpc.disconnect()
+            self.mpdConnected = False
             return False
 
     def mpdSongChanged(self):
@@ -456,6 +480,28 @@ class LEDRing(SimpleButton):
         for i in range(self.strip.numPixels()):
             self.strip.setPixelColor(i, color)            
         
+        self.strip.show()
+
+    def visualizeVolume(self):
+        """ Visualizes the current volume across the wheel """ 
+        if not self.mpdConnected:
+            return
+        
+        # vol between 0-100        
+        volume = int(self.mpc.status()["volume"])
+        volumeNorm = volume / 100.0
+        color = Color(int(volumeNorm * 255), int((1.0 - volumeNorm) * 255), 0)
+
+        # onePixelNorm = 1.0 / float(self.strip.numPixels())
+
+        for i in range(self.strip.numPixels()):
+            pixelNorm = float(i) / float(self.strip.numPixels())
+            diff = pixelNorm - volumeNorm
+            if diff <= 0:
+                self.strip.setPixelColor(i, color)
+            else:
+                self.strip.setPixelColor(i, Color(0,0,0))
+
         self.strip.show()
 
     def loop(self):
@@ -514,6 +560,24 @@ class LEDRing(SimpleButton):
                 nextAnimation = anim_shutdown
                 if anim_shutdown.isFinished():
                     signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
+                continue
+
+            # Visualize Volume
+            if self.mpdConnected:
+                currentVolume = int(self.mpc.status()["volume"])
+                if currentVolume != self.lastVolume:
+                    self.lastVolume = currentVolume
+                    self.volumeShowStartTime = time.time()
+                    self.volumeShow = True
+
+            if self.volumeShow:
+                currentAnimation = None
+                nextAnimation = None
+                self.visualizeVolume()
+
+                if time.time() - self.volumeShowStartTime > self.volumeShowTime:
+                    self.volumeShow = False
+
                 continue
 
             # Wait for an animation to get finished 

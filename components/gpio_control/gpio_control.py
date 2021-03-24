@@ -71,13 +71,14 @@ def generate_device(config, deviceName):
                 name=deviceName)
     elif device_type == 'LEDRing':
         return LEDRing(config.getint('Pin'),
-                            action=getFunctionCall(config.get('functionCall')),
-                            name=deviceName,
-                            bouncetime=config.getint('bouncetime', fallback=500),
-                            edge=config.get('edge', fallback='FALLING'),
-                            hold_repeat=config.getboolean('hold_repeat', False),
-                            hold_time=config.getfloat('hold_time', fallback=0.3),
-                            pull_up_down=config.get('pull_up_down', fallback=GPIO.PUD_UP))
+                        config.getint('PinShowVolume'),
+                        action=getFunctionCall(config.get('functionCall')),
+                        name=deviceName,
+                        bouncetime=config.getint('bouncetime', fallback=500),
+                        edge=config.get('edge', fallback='FALLING'),
+                        hold_repeat=config.getboolean('hold_repeat', False),
+                        hold_time=config.getfloat('hold_time', fallback=0.3),
+                        pull_up_down=config.get('pull_up_down', fallback=GPIO.PUD_UP))
     logger.warning('cannot find {}'.format(deviceName))
     return None
 
