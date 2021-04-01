@@ -110,7 +110,9 @@ class LEDRingAnimationTimed(LEDRingAnimation):
         super().__init__(strip)
         self.duration = duration
         self.alpha = 0.0
-        self.loop = False      
+        self.loop = False
+        self.pingpong = False
+        self.forward = True
         self.name = "LEDRingAnimationTimed"
 
     def reset(self):
@@ -118,11 +120,20 @@ class LEDRingAnimationTimed(LEDRingAnimation):
         self.alpha = 0.0
 
     def tick(self, deltaTime):
-        if self.loop and self.isFinished():
+        if (self.pingpong or self.loop) and self.isFinished():
             self.currentTime = 0.0
+            if self.pingpong:
+                self.forward = not self.forward
 
         super().tick(deltaTime)
-        self.alpha = clamp01(self.currentTime / self.duration)
+
+        a = 0
+        if self.forward:
+            a = self.currentTime / self.duration
+        else:
+            a = (self.duration - self.currentTime) / self.duration
+
+        self.alpha = clamp01(a)
 
 class FadeAnimation(LEDRingAnimationTimed):
     """ Fade from start to end color in duration """
@@ -148,17 +159,19 @@ class ColorWipeAnimation(LEDRingAnimationTimed):
     def __init__(self, strip, duration, endColor):               
         super().__init__(strip, duration)
         self.endColor = endColor        
-        self.timeBetweenPixels = duration / strip.numPixels()
+        self.timeBetweenPixels = duration / (strip.numPixels())
+        self.timer = self.timeBetweenPixels
         self.currentPixel = 0
         self.currentPixelShowTime = 0.0 
         self.name = "ColorWipeAnimation"
 
     def reset(self):
         super().reset()
-        self.currentPixel = 0        
+        self.currentPixel = 0
+        self.timer = self.timeBetweenPixels
 
     def tick(self, deltaTime):
-        super().tick(deltaTime)        
+        super().tick(deltaTime)
 
         if self.timer < self.timeBetweenPixels:
             return
@@ -274,33 +287,28 @@ class RaimbowAnimation(LEDRingAnimation):
 
 class RainbowCycleAnimation(LEDRingAnimation):
     """Draw rainbow that uniformly distributes itself across all pixels."""
-    def __init__(self, strip, delay = 0.01, invert = False):        
+    def __init__(self, strip, speed = 100, invert = False):        
         super().__init__(strip)
-        self.delay = delay
+        self.speed = speed
         self.invert = invert
         self.iter = 0
         self.name = "RainbowCycleAnimation"
 
     def reset(self):
         super().reset()
-        self.iter = 0        
+        self.iter = 0
 
     def tick(self, deltaTime):
         super().tick(deltaTime)
 
-        if self.timer < self.delay:
-            return
-
-        self.timer = 0
-        
         for i in range(self.strip.numPixels()):
             index = i
             if self.invert:
                 index = self.strip.numPixels() - i - 1
-            self.strip.setPixelColor(index, self.posToRainbow((int(i * 256 / self.strip.numPixels()) + self.iter) & 255))
+            self.strip.setPixelColor(index, self.posToRainbow((int(i * 256 / self.strip.numPixels()) + int(self.iter)) & 255))
 
         self.strip.show()
-        self.iter += 1
+        self.iter += deltaTime * self.speed
         
 class FireAnimation(LEDRingAnimation):    
     """Simulates fire according to https://www.az-delivery.de/en/blogs/azdelivery-blog-fur-arduino-und-raspberry-pi/eine-stimmungslaterne"""
@@ -418,7 +426,7 @@ class LEDRing(SimpleButton):
 
         self.logger.info("Start loop")
         # @todo: Would be better to start loop in subprocess/ thread
-        self.loop()
+        self.startLoop()
 
     def btn_onShowVolume(self):
         """ Event called on button press """
@@ -491,138 +499,192 @@ class LEDRing(SimpleButton):
         volume = int(self.mpc.status()["volume"])
         volumeNorm = volume / 100.0
         color = Color(int(volumeNorm * 255), int((1.0 - volumeNorm) * 255), 0)
+        
+        numPixels = self.strip.numPixels()
+        offset = numPixels / 2
 
-        # onePixelNorm = 1.0 / float(self.strip.numPixels())
+        # self.logger.info("volume: " + str(volumeNorm))
 
         for i in range(self.strip.numPixels()):
-            pixelNorm = float(i) / float(self.strip.numPixels())
-            diff = pixelNorm - volumeNorm
-            if diff <= 0:
-                self.strip.setPixelColor(i, color)
-            else:
+            # No/ Full volume
+            if volumeNorm <= 0:
                 self.strip.setPixelColor(i, Color(0,0,0))
+                continue
+            elif volumeNorm >= 1.0:
+                self.strip.setPixelColor(i, color)
+                continue
+
+            pixelNorm = float(i) / float(numPixels)
+            diff = pixelNorm - volumeNorm
+            pixelIndex = int((i + offset) % numPixels)    
+            if diff <= 0:
+                self.strip.setPixelColor(pixelIndex, color)
+            else:
+                self.strip.setPixelColor(pixelIndex, Color(0,0,0))
 
         self.strip.show()
 
-    def loop(self):
-        """LED loop"""
+    def fixedUpdate(self, deltaTime):
+        """The fixed update loop for animations"""
 
-        anim_fps = 144.0
-        anim_tickrate = (1.0/anim_fps)
-        currentAnimation = None
-        nextAnimation = None
-               
-        # Setup animations
-        anim_startup = FadeAnimation(self.strip, 0.05, Color(0,0,0), Color(255,128,0))
-        anim_startup.waitForFinish = True
-        anim_startup2 = FadeAnimation(self.strip, 0.5, Color(255,128,0), Color(0,0,0))
-        anim_startup2.waitForFinish = True
-        anim_shutdown = ColorWipeAnimation(self.strip, 3.0 / LED_COUNT, Color(0,0,0))
-        anim_mpdConnected = ColorWipeAnimation(self.strip, 1, Color(255, 255, 128))
-        anim_mpdConnected.waitForFinish = True
-        anim_waitForInput = FireAnimation(self.strip)
-        anim_inputError = TheaterChase(self.strip, Color(255, 32, 0), 1/90.0)
-        #anim_nextSong = RainbowCycleAnimation(self.strip, anim_tickrate * 5, True)
-        #anim_nextSong.duration = 0.5
-        anim_nextSong = ColorWipeAnimation(self.strip, 0.33, Color(255, 128, 0))        
-        anim_nextSong.name = "NextSongAnimation"
-        anim_nextSong.waitForFinish = True  
-        anim_playingSong = RainbowCycleAnimation(self.strip, 1/72, True)
+        wait = False
+        # Check for waiting for finish anims
+        if self.nextAnimation is not None:
+            if self.currentAnimation is not None:
+                if self.currentAnimation.waitForFinish and not self.currentAnimation.isFinished():
+                    wait = True                
 
-        # Fixed tick implementation
-        while True:
-            wait = False
-            if nextAnimation is not None:
-                if currentAnimation is not None:
-                    if currentAnimation.waitForFinish and not currentAnimation.isFinished():
-                        wait = True                
+            if not wait and self.currentAnimation is not self.nextAnimation:
+                self.logger.info("NEW animation: " + self.nextAnimation.name)
+                self.currentAnimation = self.nextAnimation
 
-                if not wait and currentAnimation is not nextAnimation:
-                    self.logger.info("NEW animation: " + nextAnimation.name)
-                    currentAnimation = nextAnimation
+        # Tick current animation
+        if self.currentAnimation is not None:
+            self.currentAnimation.tick(deltaTime)
+            if self.currentAnimation.waitForFinish:
+                self.logger.info("Waiting for finish " + str(self.currentAnimation.currentTime) + "/" + str(self.currentAnimation.duration))
 
-            if currentAnimation is not None:
-                currentAnimation.tick(anim_tickrate)
-                if currentAnimation.waitForFinish:
-                    self.logger.info("Waiting for finish " + str(currentAnimation.currentTime) + "/" + str(currentAnimation.duration))
-
-            time.sleep(anim_tickrate)
-            
-            # Shutdown
-            if self.killMe:
-                self.logger.info("Kill")
-                self.colorWipeInstant(Color(0,0,0))
-                nextAnimation = None
+        # Shutdown
+        if self.killMe:
+            self.logger.info("Kill")
+            self.colorWipeInstant(Color(0,0,0))
+            self.nextAnimation = None
+            signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
+            return
+        if self.checkWantsShutdown():
+            self.logger.info("Shutdown")
+            self.nextAnimation = self.anim_shutdown
+            if self.anim_shutdown.isFinished():
                 signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
-                break
-            if self.checkWantsShutdown():
-                self.logger.info("Shutdown")
-                nextAnimation = anim_shutdown
-                if anim_shutdown.isFinished():
-                    signal.raise_signal(signal.SIGINT) # needed so gpio_control continues exiting
-                continue
+            return
 
-            # Visualize Volume
-            if self.mpdConnected:
-                currentVolume = int(self.mpc.status()["volume"])
-                if currentVolume != self.lastVolume:
-                    self.lastVolume = currentVolume
-                    self.volumeShowStartTime = time.time()
-                    self.volumeShow = True
-
-            if self.volumeShow:
-                currentAnimation = None
-                nextAnimation = None
-                self.visualizeVolume()
-
-                if time.time() - self.volumeShowStartTime > self.volumeShowTime:
-                    self.volumeShow = False
-
-                continue
-
-            # Wait for an animation to get finished 
-            if wait:
-                self.logger.info("Waiting for animation")
-                continue
-
-            self.isMpdConnected()
-            self.songChangedThisFrame = self.mpdSongChanged()
-
-            # Waiting for connection
+        # Startup
+        if not self.startupDone:
             if not self.mpdConnected:
-                self.logger.info("MPD: Waiting for connection")
+                self.logger.info("MPD: Waiting for connection in startup")
                 # Play wait for animation
                 self.mpdHadConnection = False
-                if not anim_startup.isFinished():
-                    nextAnimation = anim_startup
-                elif not anim_startup2.isFinished():
-                    nextAnimation = anim_startup2
-                continue 
-            # Connection done, play quick one shot anim
+                self.isMpdConnected()                
+                self.nextAnimation = self.anim_startup
             elif not self.mpdHadConnection:
-                self.logger.info("MPD connected/ Started")
+                self.logger.info("MPD connected/ Started in startup")
                 # Play animation once on connection                    
                 self.mpdHadConnection = True
-                nextAnimation = anim_mpdConnected
+                self.nextAnimation = self.anim_mpdConnected                
+                self.lastVolume = int(self.mpc.status()["volume"])
 
-            # Pressed = Not playing
-            if self.is_pressed:
-                nextAnimation = anim_waitForInput                
-            # Released = Playing
+            if self.mpdConnected and self.mpdHadConnection and self.anim_mpdConnected.isFinished:
+                self.startupDone = True
+                self.lastVolume = int(self.mpc.status()["volume"])
+
+            return
+
+        # Visualize Volume
+        if self.mpdConnected and self.mpdHadConnection and self.startupDone:
+            currentVolume = int(self.mpc.status()["volume"])
+            if currentVolume != self.lastVolume:
+                self.lastVolume = currentVolume
+                self.volumeShowStartTime = time.time()
+                self.volumeShow = True
+
+        if self.volumeShow:
+            self.currentAnimation = None
+            self.nextAnimation = None
+            self.visualizeVolume()
+
+            if time.time() - self.volumeShowStartTime > self.volumeShowTime:
+                self.volumeShow = False
+
+            return
+
+        # Wait for an animation to get finished 
+        if wait:
+            self.logger.info("Waiting for animation")
+            return
+
+        self.isMpdConnected()
+        self.songChangedThisFrame = self.mpdSongChanged()
+
+        # Waiting for connection
+        if not self.mpdConnected:
+            self.logger.info("MPD: Waiting for connection")
+            # Play wait for animation
+            self.mpdHadConnection = False
+            self.nextAnimation = self.anim_startup
+            return 
+        # Connection done, play quick one shot anim
+        elif not self.mpdHadConnection:
+            self.logger.info("MPD connected/ Started")
+            # Play animation once on connection
+            self.mpdHadConnection = True
+            self.nextAnimation = self.anim_mpdConnected
+            self.startupDone = True
+            currentVolume = int(self.mpc.status()["volume"])
+
+        # Pressed = Not playing
+        if self.is_pressed:
+            self.nextAnimation = self.anim_waitForInput                
+        # Released = Playing
+        else:
+            # Card scanned but nothing is playing
+            if not self.mpdIsPlaying():
+                self.nextAnimation = self.anim_inputError
+                return
+
+            # Play quick cycle on song change
+            if self.songChangedThisFrame:
+                self.anim_nextSong.reset()
+                self.nextAnimation = self.anim_nextSong
+            # Playing
             else:
-                # Card scanned but nothing is playing
-                if not self.mpdIsPlaying():
-                    nextAnimation = anim_inputError
-                    continue
+                self.nextAnimation = self.anim_playingSong
+        
+        self.songChangedThisFrame = False
 
-                # Play quick cycle on song change
-                if self.songChangedThisFrame:
-                    anim_nextSong.reset()
-                    nextAnimation = anim_nextSong
-                # Playing
-                else:
-                    nextAnimation = anim_playingSong
-           
-            self.songChangedThisFrame = False
+    def startLoop(self):
+        """LED loop"""
+
+        self.animFps = 60.0
+        self.animTickrate = (1.0/self.animFps)
+        self.currentAnimation = None
+        self.nextAnimation = None
+        self.startupDone = False
+
+        # Setup animations
+        self.anim_startup = FadeAnimation(self.strip, 0.5, Color(0,0,0), Color(255,128,0))
+        self.anim_startup.pingpong = True
+        self.anim_shutdown = FadeAnimation(self.strip, 3.0,  Color(255, 255, 128), Color(0,0,0))
+        self.anim_shutdown.waitForFinish = True
+        self.anim_mpdConnected = FadeAnimation(self.strip, 1, Color(0,0,0), Color(255, 255, 128))
+        self.anim_mpdConnected.waitForFinish = True
+        self.anim_waitForInput = FireAnimation(self.strip)
+        self.anim_inputError = TheaterChase(self.strip, Color(255, 32, 0), 1/30.0)
+        self.anim_nextSong = ColorWipeAnimation(self.strip, 1, Color(255, 128, 0))        
+        self.anim_nextSong.name = "NextSongAnimation"
+        self.anim_nextSong.waitForFinish = True  
+        self.anim_playingSong = RainbowCycleAnimation(self.strip, 100, True)
+
+        newTime = 0.0
+        currentTime = time.time()    
+        frameTime = 0.0
+        accumulator = 0.0      
+        running = True
+        t = 0.0
+
+        # Fixed tick implementation
+        while running:
+            newTime = time.time()
+            frameTime = newTime - currentTime
+            currentTime = newTime
+
+            accumulator += frameTime
+
+            while accumulator >= self.animTickrate:
+                self.fixedUpdate(self.animTickrate)
+                accumulator -= self.animTickrate
+                t += self.animTickrate
+
+            # Sleep for double the tickrate
+            time.sleep((self.animTickrate * 2.0) / 1000.0)
 
 
