@@ -1,149 +1,146 @@
 #!/usr/bin/env python3
-# rotary volume knob
-# these files belong all together:
-# RPi-Jukebox-RFID/scripts/rotary-encoder.py
-# RPi-Jukebox-RFID/scripts/rotary_encoder.py
-# RPi-Jukebox-RFID/misc/sampleconfigs/phoniebox-rotary-encoder.service.stretch-default.sample
-# See wiki for more info: https://github.com/MiczFlor/RPi-Jukebox-RFID/wiki
+# Rotary volume knob
 
-import RPi.GPIO as GPIO
-from timeit import default_timer as timer
-import ctypes
+from RPi import GPIO
+from time import sleep
+import time
 import logging
-from signal import pause
+from threading import Timer
+import mpd
+import os
 
-logger = logging.getLogger(__name__)
+# Helpers
+# --------------
+def clamp(val, minimum, maximum):
+    """ Clamp value between minimum and maximum """
+    return max(minimum, min(val, maximum))
 
-c_uint8 = ctypes.c_uint8
-
-
-class Flags_bits(ctypes.LittleEndianStructure):
-    _fields_ = [
-        ("A", c_uint8, 1),  # asByte & 1
-        ("B", c_uint8, 1),  # asByte & 2
-    ]
-
-
-class Flags(ctypes.Union):
-    _anonymous_ = ("bit",)
-    _fields_ = [
-        ("bit", Flags_bits),
-        ("asByte", c_uint8)
-    ]
-
-
-class RotaryEncoder:
-    # select Enocder state bits
-    KeyIncr = 0b00000010
-    KeyDecr = 0b00000001
-
-    tblEncoder = [
-        0b00000011, 0b00000111, 0b00010011, 0b00000011,
-        0b00001011, 0b00000111, 0b00000011, 0b00000011,
-        0b00001011, 0b00000111, 0b00001111, 0b00000011,
-        0b00001011, 0b00000011, 0b00001111, 0b00000001,
-        0b00010111, 0b00000011, 0b00010011, 0b00000011,
-        0b00010111, 0b00011011, 0b00010011, 0b00000011,
-        0b00010111, 0b00011011, 0b00000011, 0b00000010]
-
-    def __init__(self, pinA, pinB, functionCallIncr=None, functionCallDecr=None, timeBase=0.1,
-                 name='RotaryEncoder'):
-        logger.debug('Initialize {name} RotaryEncoder({arg_Apin}, {arg_Bpin})'.format(
-            arg_Apin=pinA,
-            arg_Bpin=pinB,
-            name=name if name is not None else ''
-        ))
-        self.name = name
-        # persist values
-        self.pinA = pinA
-        self.pinB = pinB
-        self.functionCallbackIncr = functionCallIncr
-        self.functionCallbackDecr = functionCallDecr
-        self.timeBase = timeBase
-
-        self.encoderState = Flags()  # stores the encoder state machine state
-        self.startTime = timer()
-
-        # setup pins
-        GPIO.setup(self.pinA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self.pinB, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        self._is_active = False
+# From https://stackoverflow.com/a/13151299
+class RepeatedTimer(object):
+    def __init__(self, interval, function, *args, **kwargs):
+        self._timer     = None
+        self.interval   = interval
+        self.function   = function
+        self.args       = args
+        self.kwargs     = kwargs
+        self.is_running = False
         self.start()
 
-    def __repr__(self):
-        repr_str = '<{class_name}{object_name} on pin_a {pin_a},' + \
-                   ' pin_b {pin_b},timBase {time_base} is_active={is_active}%s>'
-        return repr_str.format(
-            class_name=self.__class__.__name__,
-            object_name=':{}'.format(self.name) if self.name is not None else '',
-            pin_a=self.pinA,
-            pin_b=self.pinB,
-            time_base=self.timeBase,
-            is_active=self.is_active)
+    def _run(self):
+        self.is_running = False
+        self.start()
+        self.function(*self.args, **self.kwargs)
 
     def start(self):
-        logger.debug('Start Event Detection on {} and {}'.format(self.pinA, self.pinB))
-        self._is_active = True
-        GPIO.add_event_detect(self.pinA, GPIO.BOTH, callback=self._Callback)
-        GPIO.add_event_detect(self.pinB, GPIO.BOTH, callback=self._Callback)
+        if not self.is_running:
+            self._timer = Timer(self.interval, self._run)
+            self._timer.start()
+            self.is_running = True
 
     def stop(self):
-        logger.debug('Stop Event Detection on {} and {}'.format(self.pinA, self.pinB))
-        GPIO.remove_event_detect(self.pinA)
-        GPIO.remove_event_detect(self.pinB)
-        self._is_active = False
+        self._timer.cancel()
+        self.is_running = False
+
+# From https://github.com/modmypi/Rotary-Encoder/blob/master/rotary_encoder.py
+class RotaryEncoder:
+    counter = 0
+    logger = logging.getLogger("RotaryEncoder")
+
+    def __init__(self, pinA, pinB, functionCallIncr=None, functionCallDecr=None, timeBase=0.1, 
+                name='RotaryEncoder'):
+        self.name = name
+        # persist values
+        self.clk = pinA
+        self.dt = pinB
+        
+        # Don't use broken increment and decrement methods for volume up/ down. Eventually will cause 
+        # huge jumps in volume and suddenly it will be full volume or no volume...
+        # Instead call mpc directly from here ...
+        # self.functionCallbackIncr = functionCallIncr
+        # self.functionCallbackDecr = functionCallDecr
+        self.timeBase = timeBase
+        self.mpc = mpd.MPDClient()
+        self.mpdHost = 'localhost'
+        self.mpdPort = 6600       
+        self.lock = False
+        self.minVolume = 0
+        self.maxVolume = 100        
+        self.stepSize = 3
+        self.cachedConfigTimestamp = -1
+        self.readConfig()
+        self.lastIncreaseTime = 0
+        self.lastDecreaseTime = 0
+
+        # setup pins
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.clk, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.dt, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        self.clkLastState = GPIO.input(self.clk)
+        GPIO.add_event_detect(self.clk, GPIO.BOTH, callback=self.check)
+        GPIO.add_event_detect(self.dt, GPIO.BOTH, callback=self.check)
 
     def __del__(self):
-        if self.is_active:
-            self.stop()
+        GPIO.remove_event_detect(self.clk)
+        GPIO.remove_event_detect(self.dt)
 
-    @property
-    def is_active(self):
-        return self._is_active
+    def readConfig(self):
+        filename ="/home/pi/RPi-Jukebox-RFID/settings/global.conf" 
+        timestamp = os.stat(filename).st_mtime
+        if timestamp == self.cachedConfigTimestamp:
+            return
 
-    def _StepSize(self):
-        end = timer()
-        duration = end - self.startTime
-        self.startTime = end
-        return int(self.timeBase / duration) + 1
+        self.cachedConfigTimestamp = timestamp        
 
-    def _Callback(self, pin):
-        logger.debug('EventDetection Called')
-        # construct new state machine input from encoder state and old state
-        statusA = GPIO.input(self.pinA)
-        statusB = GPIO.input(self.pinB)
+        with open(filename, "r") as config:
+            for line in config:
+                splitLine = line.split("=")
+                key = str(splitLine[0])
+                val = splitLine[1].replace('\n', '').replace('"', '')
+                self.logger.info("Key: " + key + ", Val: " + val)
+               
+                if key == "AUDIOVOLMAXLIMIT":
+                    self.maxVolume = int(val)
+                elif key == 'AUDIOVOLCHANGESTEP':
+                    self.stepSize = int(val)
+                # Don't use min volume limit as it will be clamped to 0.01 by Phoniebox somewhere ... 
+                # but we want to go to 0
+                #elif key == 'AUDIOVOLMINLIMIT': 
+                    #self.minVolume = int(val)
 
-        self.encoderState.A = statusA
-        self.encoderState.B = statusB
-        logger.debug('new encoderState: "{}" -> {}, {},{}'.format(
-            self.encoderState.asByte,
-            self.tblEncoder[self.encoderState.asByte], statusA, statusB
-        ))
-        current_state = self.encoderState.asByte
-        self.encoderState.asByte = self.tblEncoder[current_state]
+    def check(self, pin):
+        if self.lock:
+            return
 
-        if self.KeyIncr == self.encoderState.asByte:
-            steps = self._StepSize()
-            logger.info('{name}: Calling functionIncr {steps}'.format(
-                name=self.name, steps=steps))
-            self.functionCallbackIncr(steps)
-        elif self.KeyDecr == self.encoderState.asByte:
-            steps = self._StepSize()
-            logger.info('{name}: Calling functionDecr {steps}'.format(
-                name=self.name, steps=steps))
-            self.functionCallbackDecr(steps)
-        else:
-            logger.debug('Ignoring encoderState: "{}"'.format(self.encoderState.asByte))
+        self.readConfig()
 
+        self.lock = True
+        self.clkState = GPIO.input(self.clk)
+        self.dtState = GPIO.input(self.dt)        
+        if self.clkState != self.clkLastState:
+            try:
+                self.mpc.disconnect()
+                self.mpc.connect(self.mpdHost, self.mpdPort)
+                currentVolume = int(self.mpc.status()["volume"])
+                if self.dtState != self.clkState:
+                    self.counter += 1
 
-if __name__ == "__main__":
-    logging.basicConfig(level='INFO')
-    GPIO.setmode(GPIO.BCM)
-    pin1 = int(input('please enter first pin'))
-    pin2 = int(input('please enter second pin'))
-    func1 = lambda *args: print('Function Incr executed with {}'.format(args))
-    func2 = lambda *args: print('Function Decr executed with {}'.format(args))
-    rotarty_encoder = RotaryEncoder(pin1, pin2, func1, func2)
+                    if time.time() - self.lastDecreaseTime > 0.1:
+                        self.lastIncreaseTime = time.time()                    
+                        currentVolume += int(self.stepSize / 2.0)
+                    # self.functionCallbackIncr()
+                else:
+                    self.counter -= 1
+                    if time.time() - self.lastIncreaseTime > 0.1:
+                        self.lastDecreaseTime = time.time()
+                        currentVolume -= int(self.stepSize / 2.0)
+                    # self.functionCallbackDecr()
 
-    print('running')
-    pause()
+                #self.logger.info("Max: "+ str(self.maxVolume) + ", Min: " + str(self.minVolume) + ", Step: " + str(self.stepSize))
+                currentVolume = clamp(currentVolume, self.minVolume, self.maxVolume)
+                self.mpc.setvol(currentVolume)               
+            except ConnectionError:
+                pass
+
+            self.clkLastState = self.clkState
+        self.lock = False
+            
